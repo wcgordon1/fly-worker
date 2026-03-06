@@ -16,8 +16,16 @@ async function inspectUrl(submittedUrl) {
 
   const context = await browser.newContext();
   const page = await context.newPage();
+  let didHitTotalTimeout = false;
 
   const consoleMessages = [];
+
+  // Hard ceiling for total inspection duration. If this timer fires, we forcibly close browser
+  // resources to prevent a stuck inspection from running indefinitely.
+  const totalTimeout = setTimeout(() => {
+    didHitTotalTimeout = true;
+    void Promise.allSettled([context.close(), browser.close()]);
+  }, config.totalInspectionTimeoutMs);
 
   // Console capture is optional and capped; extraction never depends on this text.
   page.on("console", (msg) => {
@@ -124,10 +132,20 @@ async function inspectUrl(submittedUrl) {
     };
 
     return payload;
+  } catch (error) {
+    if (didHitTotalTimeout) {
+      const timeoutError = new Error(
+        `Inspection exceeded total timeout of ${config.totalInspectionTimeoutMs}ms`
+      );
+      timeoutError.code = "INSPECTION_TIMEOUT";
+      throw timeoutError;
+    }
+    throw error;
   } finally {
+    clearTimeout(totalTimeout);
     // Always close browser resources to avoid leaks under repeated requests.
-    await context.close();
-    await browser.close();
+    await context.close().catch(() => null);
+    await browser.close().catch(() => null);
   }
 }
 

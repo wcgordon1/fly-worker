@@ -4,8 +4,15 @@ const { requireWorkerSecret } = require("./auth");
 const { validateSubmittedUrl } = require("./validateUrl");
 const { inspectUrl } = require("./inspector");
 const { writeDebugFiles } = require("./writeDebugFiles");
+const {
+  rateLimitInspectRequests,
+  tryAcquireInspectionSlot,
+  getInspectionLoad
+} = require("./rateLimit");
 
 const app = express();
+// Trust the Fly proxy hop so req.ip reflects the real client IP for per-IP limiting.
+app.set("trust proxy", config.trustProxyHops);
 app.use(express.json({ limit: "100kb" }));
 
 app.get("/health", (_req, res) => {
@@ -13,7 +20,7 @@ app.get("/health", (_req, res) => {
 });
 
 // Main endpoint: auth -> validate input -> inspect target URL -> return structured JSON.
-app.post("/inspect", requireWorkerSecret, async (req, res) => {
+app.post("/inspect", requireWorkerSecret, rateLimitInspectRequests, async (req, res) => {
   const submittedUrl = req.body?.url;
   const validation = validateSubmittedUrl(submittedUrl);
 
@@ -25,6 +32,17 @@ app.post("/inspect", requireWorkerSecret, async (req, res) => {
     });
   }
 
+  // Keep inspection concurrency low so browser workload cannot spike unexpectedly.
+  const releaseInspectionSlot = tryAcquireInspectionSlot();
+  if (!releaseInspectionSlot) {
+    const load = getInspectionLoad();
+    return res.status(429).json({
+      ok: false,
+      error: `Concurrency limit exceeded: max ${load.maxConcurrentInspections} active inspections`,
+      retryAfterSeconds: 1
+    });
+  }
+
   try {
     const responsePayload = await inspectUrl(validation.normalizedUrl);
 
@@ -33,12 +51,16 @@ app.post("/inspect", requireWorkerSecret, async (req, res) => {
 
     return res.status(200).json(responsePayload);
   } catch (error) {
-    return res.status(500).json({
+    const isTimeout = error?.code === "INSPECTION_TIMEOUT" || error?.name === "TimeoutError";
+
+    return res.status(isTimeout ? 504 : 500).json({
       ok: false,
       submittedUrl: validation.normalizedUrl,
-      error: "Inspection failed",
+      error: isTimeout ? "Inspection timed out" : "Inspection failed",
       details: error?.message || "Unknown error"
     });
+  } finally {
+    releaseInspectionSlot();
   }
 });
 

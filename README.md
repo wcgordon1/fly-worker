@@ -14,6 +14,7 @@ This worker is meant to be called by your main app. Your main app sends a URL, a
 
 - `POST /inspect` accepts one URL.
 - Requires `x-worker-secret` header auth.
+- Applies in-memory per-IP rate limits and an in-process concurrency cap.
 - Validates URL and rejects obvious unsafe/internal targets.
 - Loads only the submitted URL in Playwright.
 - Uses runtime object inspection (not console text parsing) as source of truth.
@@ -59,6 +60,11 @@ Common optional:
 - `BUBBLE_SIGNAL_WAIT_MS` (default `5000`)
 - `APP_WAIT_MS` (default `10000`)
 - `POST_APP_DELAY_MS` (default `1200`)
+- `TOTAL_INSPECTION_TIMEOUT_MS` (default `30000`)
+- `RATE_LIMIT_PER_MINUTE` (default `5`)
+- `RATE_LIMIT_PER_HOUR` (default `20`)
+- `MAX_CONCURRENT_INSPECTIONS` (default `2`)
+- `TRUST_PROXY_HOPS` (default `1` for Fly proxy chain)
 - `MAX_APP_KEYS` (default `50`)
 - `MAX_CONSOLE_MESSAGES` (default `20`)
 - `MAX_CONSOLE_TEXT_LENGTH` (default `250`)
@@ -72,6 +78,28 @@ Common optional:
 - Unauthorized calls get `401`
 
 This is the MVP protection to prevent random public traffic from abusing browser execution.
+
+## Rate limiting and concurrency (MVP)
+
+`POST /inspect` has two additional guards:
+
+- Per-IP in-memory rate limits:
+  - `5` requests/minute/IP (default)
+  - `20` requests/hour/IP (default)
+- Global in-process concurrency cap:
+  - `2` active inspections at once (default)
+
+When limits are exceeded the worker returns `429` and includes `retryAfterSeconds`.
+
+Timeout behavior:
+
+- If total inspection duration exceeds `TOTAL_INSPECTION_TIMEOUT_MS`, worker returns `504`.
+
+Important MVP caveat:
+
+- These limits are in-memory and local to one running process.
+- If you scale to multiple Fly machines, counters are **not** shared globally.
+- For globally shared limits later, use Redis/Upstash (or another shared store).
 
 ## Calling from your main app (recommended pattern)
 
@@ -236,6 +264,7 @@ curl https://<your-fly-app>.fly.dev/health
 10. Do not fail whole request when one section missing: each extractor returns independently.
 11. Return partial results with warnings: each section contains its own warnings array.
 12. Keep payloads bounded: app keys + console capture are capped.
+13. In-memory rate limits are per-instance only: use a shared backend if you later need global limits across many machines.
 
 ## Implementation notes
 
@@ -243,6 +272,7 @@ curl https://<your-fly-app>.fly.dev/health
 - `src/auth.js`: shared secret header guard.
 - `src/validateUrl.js`: malformed URL + obvious SSRF/internal-target checks.
 - `src/inspector.js`: Playwright lifecycle, staged waits, runtime snapshot.
+- `src/rateLimit.js`: in-memory per-IP rate limiting + concurrency slot control.
 - `src/bubbleDetection.js`: Bubble-likelihood logic.
 - `src/extractors.js`: targeted JSON extraction + optional DBML derivation.
 - `src/writeDebugFiles.js`: best-effort local output writes.
