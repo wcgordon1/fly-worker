@@ -27,9 +27,16 @@ const config = {
   postAppDelayMs: positiveIntEnv("POST_APP_DELAY_MS", 1200),
   totalInspectionTimeoutMs: positiveIntEnv("TOTAL_INSPECTION_TIMEOUT_MS", 30000),
 
-  // MVP protections: per-IP rate limits and global in-process concurrency cap.
-  rateLimitPerMinute: positiveIntEnv("RATE_LIMIT_PER_MINUTE", 5),
-  rateLimitPerHour: positiveIntEnv("RATE_LIMIT_PER_HOUR", 20),
+  // Layered in-memory limits for MVP cost control.
+  // Global limits cap overall worker traffic.
+  globalRateLimitPerMinute: positiveIntEnv("GLOBAL_RATE_LIMIT_PER_MINUTE", 60),
+  globalRateLimitPerHour: positiveIntEnv("GLOBAL_RATE_LIMIT_PER_HOUR", 500),
+
+  // Per-caller limits cap one caller's usage. Caller ID comes from x-caller-id.
+  perCallerRateLimitPerMinute: positiveIntEnv("PER_CALLER_RATE_LIMIT_PER_MINUTE", 5),
+  perCallerRateLimitPerHour: positiveIntEnv("PER_CALLER_RATE_LIMIT_PER_HOUR", 20),
+
+  // Concurrency cap protects against parallel browser cost spikes.
   maxConcurrentInspections: positiveIntEnv("MAX_CONCURRENT_INSPECTIONS", 2),
 
   // Keep response metadata bounded so payloads remain predictable.

@@ -11,7 +11,7 @@ const {
 } = require("./rateLimit");
 
 const app = express();
-// Trust the Fly proxy hop so req.ip reflects the real client IP for per-IP limiting.
+// Trust the Fly proxy hop so req.ip is usable for fallback caller identification.
 app.set("trust proxy", config.trustProxyHops);
 app.use(express.json({ limit: "100kb" }));
 
@@ -36,9 +36,10 @@ app.post("/inspect", requireWorkerSecret, rateLimitInspectRequests, async (req, 
   const releaseInspectionSlot = tryAcquireInspectionSlot();
   if (!releaseInspectionSlot) {
     const load = getInspectionLoad();
-    return res.status(429).json({
+    res.set("Retry-After", "1");
+    return res.status(503).json({
       ok: false,
-      error: `Concurrency limit exceeded: max ${load.maxConcurrentInspections} active inspections`,
+      error: `Worker is busy: max ${load.maxConcurrentInspections} active inspections`,
       retryAfterSeconds: 1
     });
   }

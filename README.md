@@ -14,7 +14,7 @@ This worker is meant to be called by your main app. Your main app sends a URL, a
 
 - `POST /inspect` accepts one URL.
 - Requires `x-worker-secret` header auth.
-- Applies in-memory per-IP rate limits and an in-process concurrency cap.
+- Applies layered in-memory limits (global + per-caller) and an in-process concurrency cap.
 - Validates URL and rejects obvious unsafe/internal targets.
 - Loads only the submitted URL in Playwright.
 - Uses runtime object inspection (not console text parsing) as source of truth.
@@ -56,13 +56,15 @@ Common optional:
 - `PORT` (default `8080`)
 - `DEBUG_OUTPUT_ENABLED` (`true`/`false`, default true outside production)
 - `OUTPUT_DIR` (default `./output`)
-- `NAVIGATION_TIMEOUT_MS` (default `30000`)
+- `NAVIGATION_TIMEOUT_MS` (default `15000`)
 - `BUBBLE_SIGNAL_WAIT_MS` (default `5000`)
 - `APP_WAIT_MS` (default `10000`)
 - `POST_APP_DELAY_MS` (default `1200`)
 - `TOTAL_INSPECTION_TIMEOUT_MS` (default `30000`)
-- `RATE_LIMIT_PER_MINUTE` (default `5`)
-- `RATE_LIMIT_PER_HOUR` (default `20`)
+- `GLOBAL_RATE_LIMIT_PER_MINUTE` (default `60`)
+- `GLOBAL_RATE_LIMIT_PER_HOUR` (default `500`)
+- `PER_CALLER_RATE_LIMIT_PER_MINUTE` (default `5`)
+- `PER_CALLER_RATE_LIMIT_PER_HOUR` (default `20`)
 - `MAX_CONCURRENT_INSPECTIONS` (default `2`)
 - `TRUST_PROXY_HOPS` (default `1` for Fly proxy chain)
 - `MAX_APP_KEYS` (default `50`)
@@ -83,13 +85,24 @@ This is the MVP protection to prevent random public traffic from abusing browser
 
 `POST /inspect` has two additional guards:
 
-- Per-IP in-memory rate limits:
-  - `5` requests/minute/IP (default)
-  - `20` requests/hour/IP (default)
+- Global in-memory rate limits:
+  - `60` requests/minute (default)
+  - `500` requests/hour (default)
+- Per-caller in-memory rate limits:
+  - `5` requests/minute per caller ID (default)
+  - `20` requests/hour per caller ID (default)
 - Global in-process concurrency cap:
   - `2` active inspections at once (default)
 
-When limits are exceeded the worker returns `429` and includes `retryAfterSeconds`.
+Caller ID source:
+
+- Worker reads `x-caller-id` header (sent by your backend).
+- If missing, worker falls back to IP-based key (`fallback-ip:<ip>`).
+
+When limits are exceeded:
+
+- `429` for global or per-caller rate limits, with `retryAfterSeconds`.
+- `503` when concurrency cap is hit (worker busy), with `retryAfterSeconds`.
 
 Timeout behavior:
 
@@ -100,6 +113,12 @@ Important MVP caveat:
 - These limits are in-memory and local to one running process.
 - If you scale to multiple Fly machines, counters are **not** shared globally.
 - For globally shared limits later, use Redis/Upstash (or another shared store).
+
+Visitor tracking recommendation for `x-caller-id`:
+
+- Best MVP: send a stable server-generated visitor/user/workspace ID from your main app.
+- Avoid raw IP/UA values as primary identity (they are noisy and can shift frequently).
+- If you must fallback in your main app backend, use a hashed fingerprint (for example: hash(IP + user-agent + salt)).
 
 ## Calling from your main app (recommended pattern)
 
@@ -116,12 +135,14 @@ Server-side example (Node.js):
 ```js
 const workerBaseUrl = process.env.WORKER_BASE_URL;
 const workerSecret = process.env.WORKER_SECRET;
+const callerId = "visitor_12345"; // Example: server-generated visitor/user/workspace ID
 
 const response = await fetch(`${workerBaseUrl}/inspect`, {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
-    "x-worker-secret": workerSecret
+    "x-worker-secret": workerSecret,
+    "x-caller-id": callerId
   },
   body: JSON.stringify({ url: "https://app.vows.you/" })
 });
@@ -162,6 +183,7 @@ npm start
 curl -X POST http://localhost:8080/inspect \
   -H 'Content-Type: application/json' \
   -H 'x-worker-secret: replace-with-long-random-secret' \
+  -H 'x-caller-id: visitor_12345' \
   -d '{"url":"https://example.com"}'
 ```
 
@@ -236,6 +258,7 @@ fly deploy
 curl -X POST https://<your-fly-app>.fly.dev/inspect \
   -H 'Content-Type: application/json' \
   -H 'x-worker-secret: replace-with-long-random-secret' \
+  -H 'x-caller-id: visitor_12345' \
   -d '{"url":"https://example.com"}'
 ```
 
@@ -264,7 +287,7 @@ curl https://<your-fly-app>.fly.dev/health
 10. Do not fail whole request when one section missing: each extractor returns independently.
 11. Return partial results with warnings: each section contains its own warnings array.
 12. Keep payloads bounded: app keys + console capture are capped.
-13. In-memory rate limits are per-instance only: use a shared backend if you later need global limits across many machines.
+13. In-memory limits are per-instance only: use a shared backend if you later need global limits across many machines.
 
 ## Implementation notes
 
@@ -272,7 +295,7 @@ curl https://<your-fly-app>.fly.dev/health
 - `src/auth.js`: shared secret header guard.
 - `src/validateUrl.js`: malformed URL + obvious SSRF/internal-target checks.
 - `src/inspector.js`: Playwright lifecycle, staged waits, runtime snapshot.
-- `src/rateLimit.js`: in-memory per-IP rate limiting + concurrency slot control.
+- `src/rateLimit.js`: layered in-memory rate limits (global + per-caller) + concurrency slot control.
 - `src/bubbleDetection.js`: Bubble-likelihood logic.
 - `src/extractors.js`: targeted JSON extraction + optional DBML derivation.
 - `src/writeDebugFiles.js`: best-effort local output writes.
