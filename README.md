@@ -73,6 +73,34 @@ Common optional:
 
 This is the MVP protection to prevent random public traffic from abusing browser execution.
 
+## Calling from your main app (recommended pattern)
+
+Call the worker from your main app **server-side** (API route/backend), not from browser client code.
+
+Why:
+
+- The worker secret must stay private.
+- Browser-side calls would expose `x-worker-secret`.
+- This repo intentionally does not enable broad CORS for public browser-origin calls.
+
+Server-side example (Node.js):
+
+```js
+const workerBaseUrl = process.env.WORKER_BASE_URL;
+const workerSecret = process.env.WORKER_SECRET;
+
+const response = await fetch(`${workerBaseUrl}/inspect`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-worker-secret": workerSecret
+  },
+  body: JSON.stringify({ url: "https://app.vows.you/" })
+});
+
+const data = await response.json();
+```
+
 ## Local run
 
 1. Install dependencies:
@@ -160,6 +188,8 @@ fly auth login
 fly launch --no-deploy
 ```
 
+If prompted, keep this app as a standalone service. You can keep the checked-in `Dockerfile` and `fly.toml`.
+
 4. Set secret:
 
 ```bash
@@ -180,6 +210,17 @@ curl -X POST https://<your-fly-app>.fly.dev/inspect \
   -H 'x-worker-secret: replace-with-long-random-secret' \
   -d '{"url":"https://example.com"}'
 ```
+
+7. Optional quick health check:
+
+```bash
+curl https://<your-fly-app>.fly.dev/health
+```
+
+8. Wire your main app backend env vars:
+
+- `WORKER_BASE_URL=https://<your-fly-app>.fly.dev`
+- `WORKER_SECRET=<same secret set in Fly>`
 
 ## Common pitfalls (and how this worker addresses them)
 

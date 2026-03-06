@@ -4,6 +4,9 @@
   "description": "Standalone Fly.io worker that inspects a submitted public URL and extracts targeted Bubble runtime data.",
   "main": "src/server.js",
   "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js"
@@ -17,10 +20,10 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "express": "^4.19.2",
-    "playwright": "^1.53.2"
+    "express": "4.19.2",
+    "playwright": "1.53.2"
   },
   "devDependencies": {
-    "nodemon": "^3.1.4"
+    "nodemon": "3.1.4"
   }
 }

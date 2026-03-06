@@ -42,6 +42,7 @@ app.post("/inspect", requireWorkerSecret, async (req, res) => {
   }
 });
 
-app.listen(config.port, () => {
-  console.log(`bubble-runtime-worker listening on port ${config.port}`);
+// Explicitly bind 0.0.0.0 so container platforms (including Fly) can route traffic.
+app.listen(config.port, "0.0.0.0", () => {
+  console.log(`bubble-runtime-worker listening on 0.0.0.0:${config.port}`);
 });
