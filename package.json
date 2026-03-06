@@ -1,0 +1,26 @@
+{
+  "name": "bubble-runtime-worker",
+  "version": "1.0.0",
+  "description": "Standalone Fly.io worker that inspects a submitted public URL and extracts targeted Bubble runtime data.",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
+  "keywords": [
+    "bubble",
+    "playwright",
+    "flyio",
+    "worker"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "playwright": "^1.53.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}
